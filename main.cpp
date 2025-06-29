@@ -1,239 +1,312 @@
+#include <iostream>
+#include <vector>
+#include <string>
+
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <vector>
 
-// Cube vertex data
-const float cubeVertices[] = {
-    // Front face
-    -0.5f, -0.5f,  0.5f,
-     0.5f, -0.5f,  0.5f,
-     0.5f,  0.5f,  0.5f,
-    -0.5f,  0.5f,  0.5f,
-    // Back face
-    -0.5f, -0.5f, -0.5f,
-     0.5f, -0.5f, -0.5f,
-     0.5f,  0.5f, -0.5f,
-    -0.5f,  0.5f, -0.5f,
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
+// Vertex structure
+struct Vertex {
+    glm::vec3 Position;
+    glm::vec3 Normal;
+    glm::vec2 TexCoords;
 };
 
-// Cube indices
-const unsigned int cubeIndices[] = {
-    0, 1, 2, 2, 3, 0, // Front
-    1, 5, 6, 6, 2, 1, // Right
-    5, 4, 7, 7, 6, 5, // Back
-    4, 0, 3, 3, 7, 4, // Left
-    3, 2, 6, 6, 7, 3, // Top
-    4, 5, 1, 1, 0, 4  // Bottom
+// Simple Mesh class
+class Mesh {
+public:
+    std::vector<Vertex> vertices;
+    std::vector<unsigned int> indices;
+    unsigned int VAO;
+
+    Mesh(std::vector<Vertex>& verts, std::vector<unsigned int>& inds)
+        : vertices(verts), indices(inds) {
+        setupMesh();
+    }
+
+    void Draw(unsigned int shader) {
+        glBindVertexArray(VAO);
+        glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
+        glBindVertexArray(0);
+    }
+
+private:
+    unsigned int VBO, EBO;
+    void setupMesh() {
+        glGenVertexArrays(1, &VAO);
+        glGenBuffers(1, &VBO);
+        glGenBuffers(1, &EBO);
+
+        glBindVertexArray(VAO);
+        glBindBuffer(GL_ARRAY_BUFFER, VBO);
+        glBufferData(GL_ARRAY_BUFFER,
+            vertices.size() * sizeof(Vertex),
+            vertices.data(), GL_STATIC_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+            indices.size() * sizeof(unsigned int),
+            indices.data(), GL_STATIC_DRAW);
+
+        // vertex positions
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
+            sizeof(Vertex), (void*)0);
+        // normals
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
+            sizeof(Vertex), (void*)offsetof(Vertex, Normal));
+        // texture coords
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE,
+            sizeof(Vertex), (void*)offsetof(Vertex, TexCoords));
+        glBindVertexArray(0);
+    }
 };
 
-// Physics Cube struct
-struct PhysicsCube {
-    glm::vec3 position;
-    glm::vec3 velocity;
-    glm::vec3 acceleration;
-    float mass;
-    float restitution;
+// Model loader using Assimp
+class Model {
+public:
+    std::vector<Mesh> meshes;
+
+    Model(const std::string& path) {
+        loadModel(path);
+    }
+
+    void Draw(unsigned int shader) {
+        for (auto& mesh : meshes)
+            mesh.Draw(shader);
+    }
+
+private:
+    void loadModel(const std::string& path) {
+        Assimp::Importer importer;
+        const aiScene* scene = importer.ReadFile(path,
+            aiProcess_Triangulate |
+            aiProcess_FlipUVs |
+            aiProcess_CalcTangentSpace);
+        if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
+            std::cerr << "ERROR::ASSIMP::" << importer.GetErrorString() << std::endl;
+            return;
+        }
+        processNode(scene->mRootNode, scene);
+    }
+
+    void processNode(aiNode* node, const aiScene* scene) {
+        for (unsigned int i = 0; i < node->mNumMeshes; i++) {
+            aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
+            meshes.push_back(processMesh(mesh, scene));
+        }
+        for (unsigned int i = 0; i < node->mNumChildren; i++)
+            processNode(node->mChildren[i], scene);
+    }
+
+    Mesh processMesh(aiMesh* mesh, const aiScene* scene) {
+        std::vector<Vertex> vertices;
+        std::vector<unsigned int> indices;
+
+        for (unsigned int i = 0; i < mesh->mNumVertices; i++) {
+            Vertex vertex;
+            vertex.Position = glm::vec3(
+                mesh->mVertices[i].x,
+                mesh->mVertices[i].y,
+                mesh->mVertices[i].z
+            );
+            if (mesh->HasNormals())
+                vertex.Normal = glm::vec3(
+                    mesh->mNormals[i].x,
+                    mesh->mNormals[i].y,
+                    mesh->mNormals[i].z
+                );
+            else vertex.Normal = glm::vec3(0.0f);
+
+            if (mesh->mTextureCoords[0])
+                vertex.TexCoords = glm::vec2(
+                    mesh->mTextureCoords[0][i].x,
+                    mesh->mTextureCoords[0][i].y
+                );
+            else vertex.TexCoords = glm::vec2(0.0f);
+
+            vertices.push_back(vertex);
+        }
+        for (unsigned int i = 0; i < mesh->mNumFaces; i++) {
+            aiFace face = mesh->mFaces[i];
+            for (unsigned int j = 0; j < face.mNumIndices; j++)
+                indices.push_back(face.mIndices[j]);
+        }
+        return Mesh(vertices, indices);
+    }
 };
 
-// Shader source code
-const char* vertexShaderSource = R"(
+// Utility: compile shader and link program
+unsigned int compileShader(unsigned int type, const char* source) {
+    unsigned int id = glCreateShader(type);
+    glShaderSource(id, 1, &source, nullptr);
+    glCompileShader(id);
+    int success;
+    glGetShaderiv(id, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char info[512];
+        glGetShaderInfoLog(id, 512, NULL, info);
+        std::cerr << "ERROR::SHADER_COMPILATION_FAILED\n" << info << std::endl;
+    }
+    return id;
+}
+
+unsigned int createShaderProgram(const char* vertSrc, const char* fragSrc) {
+    unsigned int program = glCreateProgram();
+    unsigned int vs = compileShader(GL_VERTEX_SHADER, vertSrc);
+    unsigned int fs = compileShader(GL_FRAGMENT_SHADER, fragSrc);
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+
+    int success;
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (!success) {
+        char info[512];
+        glGetProgramInfoLog(program, 512, NULL, info);
+        std::cerr << "ERROR::PROGRAM_LINKING_FAILED\n" << info << std::endl;
+    }
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    return program;
+}
+
+// Basic shaders
+const char* vertexShaderSource = R"GLSL(
 #version 430 core
-layout (location = 0) in vec3 aPos;
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aTexCoords;
+
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
-void main() {
-    gl_Position = projection * view * model * vec4(aPos, 1.0);
-}
-)";
 
-const char* fragmentShaderSource = R"(
+out vec3 FragPos;
+out vec3 Normal;
+
+void main() {
+    FragPos = vec3(model * vec4(aPos, 1.0));
+    Normal = mat3(transpose(inverse(model))) * aNormal;
+    gl_Position = projection * view * vec4(FragPos, 1.0);
+}
+)GLSL";
+
+const char* fragmentShaderSource = R"GLSL(
 #version 430 core
 out vec4 FragColor;
-uniform vec3 color;
+
+in vec3 FragPos;
+in vec3 Normal;
+
+uniform vec3 lightPos;
+uniform vec3 viewPos;
+uniform vec3 lightColor;
+uniform vec3 objectColor;
+
 void main() {
-    FragColor = vec4(color, 1.0);
+    float ambientStrength = 0.2;
+    vec3 ambient = ambientStrength * lightColor;
+
+    vec3 norm = normalize(Normal);
+    vec3 lightDir = normalize(lightPos - FragPos);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * lightColor;
+
+    float specularStrength = 0.5;
+    vec3 viewDir = normalize(viewPos - FragPos);
+    vec3 reflectDir = reflect(-lightDir, norm);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32);
+    vec3 specular = specularStrength * spec * lightColor;
+
+    vec3 result = (ambient + diffuse + specular) * objectColor;
+    FragColor = vec4(result, 1.0);
 }
-)";
+)GLSL";
 
-// Physics update function
-void updatePhysics(PhysicsCube& cube1, PhysicsCube& cube2, float deltaTime) {
-    // Update positions
-    cube1.velocity += cube1.acceleration * deltaTime;
-    cube2.velocity += cube2.acceleration * deltaTime;
-    cube1.position += cube1.velocity * deltaTime;
-    cube2.position += cube2.velocity * deltaTime;
-
-    // Wall collision constants
-    const float WALL_X = 2.5f;
-    const float WALL_Y = 2.0f;
-    const float WALL_Z = 2.5f;
-    const float CUBE_HALF_SIZE = 0.5f;
-
-    // Wall collisions for cube1
-    if (std::abs(cube1.position.x) > WALL_X - CUBE_HALF_SIZE) {
-        cube1.position.x = (WALL_X - CUBE_HALF_SIZE) * (cube1.position.x < 0 ? -1.0f : 1.0f);
-        cube1.velocity.x = -cube1.velocity.x * cube1.restitution;
-    }
-    if (std::abs(cube1.position.y) > WALL_Y - CUBE_HALF_SIZE) {
-        cube1.position.y = (WALL_Y - CUBE_HALF_SIZE) * (cube1.position.y < 0 ? -1.0f : 1.0f);
-        cube1.velocity.y = -cube1.velocity.y * cube1.restitution;
-    }
-    if (std::abs(cube1.position.z) > WALL_Z - CUBE_HALF_SIZE) {
-        cube1.position.z = (WALL_Z - CUBE_HALF_SIZE) * (cube1.position.z < 0 ? -1.0f : 1.0f);
-        cube1.velocity.z = -cube1.velocity.z * cube1.restitution;
-    }
-
-    // Wall collisions for cube2
-    if (std::abs(cube2.position.x) > WALL_X - CUBE_HALF_SIZE) {
-        cube2.position.x = (WALL_X - CUBE_HALF_SIZE) * (cube2.position.x < 0 ? -1.0f : 1.0f);
-        cube2.velocity.x = -cube2.velocity.x * cube2.restitution;
-    }
-    if (std::abs(cube2.position.y) > WALL_Y - CUBE_HALF_SIZE) {
-        cube2.position.y = (WALL_Y - CUBE_HALF_SIZE) * (cube2.position.y < 0 ? -1.0f : 1.0f);
-        cube2.velocity.y = -cube2.velocity.y * cube2.restitution;
-    }
-    if (std::abs(cube2.position.z) > WALL_Z - CUBE_HALF_SIZE) {
-        cube2.position.z = (WALL_Z - CUBE_HALF_SIZE) * (cube2.position.z < 0 ? -1.0f : 1.0f);
-        cube2.velocity.z = -cube2.velocity.z * cube2.restitution;
-    }
-
-    // Check for cube collision
-    glm::vec3 diff = cube1.position - cube2.position;
-    float distance = glm::length(diff);
-
-    if (distance < 1.0f) { // 1.0f is the sum of cube half-widths
-        // Collision response
-        glm::vec3 normal = glm::normalize(diff);
-
-        // Relative velocity
-        glm::vec3 relativeVel = cube1.velocity - cube2.velocity;
-
-        // Calculate impulse
-        float impulseStrength = -(1.0f + cube1.restitution) *
-            glm::dot(relativeVel, normal) /
-            (1.0f / cube1.mass + 1.0f / cube2.mass);
-
-        // Apply impulse
-        cube1.velocity += (impulseStrength / cube1.mass) * normal;
-        cube2.velocity -= (impulseStrength / cube2.mass) * normal;
-
-        // Separate the cubes
-        float overlap = 1.0f - distance;
-        glm::vec3 separation = overlap * normal * 0.5f;
-        cube1.position += separation;
-        cube2.position -= separation;
-    }
+// Window resize callback
+void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+    glViewport(0, 0, width, height);
 }
 
 int main() {
-    // Initialize GLFW and OpenGL
+    // Initialize GLFW
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(800, 600, "Physics Cubes", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(1600, 900, "Assimp Model Loading", NULL, NULL);
+    if (!window) {
+        std::cerr << "Failed to create GLFW window" << std::endl;
+        glfwTerminate();
+        return -1;
+    }
     glfwMakeContextCurrent(window);
-    gladLoadGL();
+    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
-    // Create and compile shaders
-    unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-    glCompileShader(vertexShader);
+    // Load OpenGL functions via GLAD
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+        std::cerr << "Failed to initialize GLAD" << std::endl;
+        return -1;
+    }
 
-    unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-    glCompileShader(fragmentShader);
+    glEnable(GL_DEPTH_TEST);
 
-    unsigned int shaderProgram = glCreateProgram();
-    glAttachShader(shaderProgram, vertexShader);
-    glAttachShader(shaderProgram, fragmentShader);
-    glLinkProgram(shaderProgram);
+    // Build shader program
+    unsigned int shaderProgram = createShaderProgram(vertexShaderSource, fragmentShaderSource);
 
-    // Create VAO and VBO
-    unsigned int VAO, VBO, EBO;
-    glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO);
-    glGenBuffers(1, &EBO);
+    // Load model
+    Model ourModel("models/viper/Datsun_280Z.obj"); // Load GLTF model
 
-    glBindVertexArray(VAO);
-    glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(cubeIndices), cubeIndices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    // Initialize physics cubes
-    PhysicsCube cube1 = {
-        glm::vec3(-1.0f, 0.0f, 0.0f),  // position
-        glm::vec3(5.0f, 0.0f, 0.0f),   // velocity
-        glm::vec3(0.0f, 0.0f, 0.0f),   // acceleration
-        1.0f,                           // mass
-        0.8f                            // restitution
-    };
-
-    PhysicsCube cube2 = {
-        glm::vec3(1.0f, 0.0f, 0.0f),   // position
-        glm::vec3(-5.0f, 0.0f, 0.0f),  // velocity
-        glm::vec3(0.0f, 0.0f, 0.0f),   // acceleration
-        1.0f,                           // mass
-        0.8f                            // restitution
-    };
-
-    // Set up camera
-    glm::mat4 view = glm::lookAt(
-        glm::vec3(0.0f, 2.0f, 5.0f),
-        glm::vec3(0.0f, 0.0f, 0.0f),
-        glm::vec3(0.0f, 1.0f, 0.0f)
-    );
+    // Camera / projection setup
     glm::mat4 projection = glm::perspective(glm::radians(45.0f), 800.0f / 600.0f, 0.1f, 100.0f);
 
-    float lastFrame = 0.0f;
-
-    // Main loop
+    // Render loop
     while (!glfwWindowShouldClose(window)) {
-        float currentFrame = glfwGetTime();
-        float deltaTime = currentFrame - lastFrame;
-        lastFrame = currentFrame;
+        // input
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+            glfwSetWindowShouldClose(window, true);
 
-        // Update physics
-        updatePhysics(cube1, cube2, deltaTime);
-
-        // Render
+        // clear buffers
+        glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
         glUseProgram(shaderProgram);
 
-        // Set uniforms
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        // Transform uniforms
+        glm::mat4 view = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -1.5f, -5.0f));
+        glm::mat4 model = glm::mat4(1.0f);
 
-        // Draw cube1
-        glm::mat4 model1 = glm::translate(glm::mat4(1.0f), cube1.position);
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model1));
-        glUniform3f(glGetUniformLocation(shaderProgram, "color"), 1.0f, 0.0f, 0.0f);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"),
+            1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"),
+            1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"),
+            1, GL_FALSE, glm::value_ptr(model));
 
-        // Draw cube2
-        glm::mat4 model2 = glm::translate(glm::mat4(1.0f), cube2.position);
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model2));
-        glUniform3f(glGetUniformLocation(shaderProgram, "color"), 0.0f, 0.0f, 1.0f);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        // Light & color uniforms
+        glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), 5.0f, 5.0f, 5.0f);
+        glUniform3f(glGetUniformLocation(shaderProgram, "viewPos"), 0.0f, 0.0f, 5.0f);
+        glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
+        glUniform3f(glGetUniformLocation(shaderProgram, "objectColor"), 0.8f, 0.5f, 0.3f);
 
+        // Draw model
+        ourModel.Draw(shaderProgram);
+
+        // swap buffers and poll IO events
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
-
-    // Cleanup
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
-    glDeleteBuffers(1, &EBO);
-    glDeleteProgram(shaderProgram);
 
     glfwTerminate();
     return 0;

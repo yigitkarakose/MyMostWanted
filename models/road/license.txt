@@ -1,0 +1,11 @@
+Model Information:
+* title:	Road
+* source:	https://sketchfab.com/3d-models/road-1c5c2dc9995c437882eb7da6d25156ba
+* author:	mamont nikita (https://sketchfab.com/mamontnikita62)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Road" (https://sketchfab.com/3d-models/road-1c5c2dc9995c437882eb7da6d25156ba) by mamont nikita (https://sketchfab.com/mamontnikita62) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
