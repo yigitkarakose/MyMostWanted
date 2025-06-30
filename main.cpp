@@ -212,6 +212,13 @@ glm::vec3 P_junction = { -92.7421f, fixedY, -249.6840f };
 glm::vec3 P_barricade = { -36.4241f, fixedY, -179.7300f };
 glm::vec3 P_train = { -177.2250f,fixedY, -161.1990f };
 // trenin ileri hareketi için
+enum class CameraMode {
+    Free,       // hâlihazırdaki serbest kamera (WASDQE)
+    Overhead,   // üstten
+    FrontPOV    // ön POV
+};
+
+static CameraMode camMode = CameraMode::Free;
 
 
 // Camera & input globals
@@ -281,6 +288,19 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
 }
 
 void processInput(GLFWwindow* window) {
+    // C tuşuna basınca mod değiştir
+    static bool cPressedLast = false;
+    if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
+        
+        if (!cPressedLast) {
+            // döngüsel geçiş
+            camMode = CameraMode((int(camMode) + 1) % 3);
+            cPressedLast = true;
+        }
+    }
+    else {
+        cPressedLast = false;
+    }
     float currentFrame = glfwGetTime();
     deltaTime = currentFrame - lastFrame;
     lastFrame = currentFrame;
@@ -599,7 +619,6 @@ int main() {
 	Model cityModel("models/city.obj");
     Model barricadeModel("models/Concrete_Barricade.obj");
     Model trainModel("models/electrictrain.obj");
-    Model heliModel("models/Lowpoly_Helicopter.obj");
     Model mondeoModel("models/Mondeo_NYPD.obj");
     Model policecarModel("models/policecar.obj");
     carObj = { &carModel,     P_start,    glm::vec3(0.0f), glm::vec3(3.0f), glm::vec3(0.8f,0.7f,0.0f) };
@@ -663,13 +682,6 @@ int main() {
         glm::vec3(0.6f,0.3f,0.1f)
         });*/
 
-    // Helikopter (kırmızı)
-    scene.push_back({ &heliModel,
-        glm::vec3(-6.0f, 20.0f, -330.0f), // başlangıçta biraz yukarı/arkada
-        glm::vec3(0.0f),
-        glm::vec3(0.005f),
-        glm::vec3(1.0f,0.0f,0.0f)
-        });
     // Mondeo (mavi) — barikat civarında 2 adet
     scene.push_back({ &mondeoModel,
         glm::vec3(-42.3781f, 1.87126f, -173.417f),
@@ -717,7 +729,52 @@ int main() {
         int w, h;
         glfwGetFramebufferSize(window, &w, &h);
         glm::mat4 proj = glm::perspective(glm::radians(fov), (float)w / h, 0.1f, 1000.0f);
-        glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+        // view hesaplama:
+        glm::mat4 view;
+        switch (camMode) {
+        case CameraMode::Free:
+            view = glm::lookAt(cameraPos,
+                cameraPos + cameraFront,
+                cameraUp);
+            break;
+
+        case CameraMode::Overhead: {
+            // Arabanın ileri yönü (XZ düzleminde)
+            glm::vec3 fw = glm::normalize(glm::vec3(
+                sin(glm::radians(carObj.rotation.y)),
+                0.0f,
+                cos(glm::radians(carObj.rotation.y))
+            ));
+            glm::vec3 back = -fw;
+
+            // 1) Göz noktası: arabanın 5 birim gerisinde, 10 birim yukarıda
+            glm::vec3 eye = carObj.position + back * 10.0f + glm::vec3(0.0f, 5.0f, 0.0f);
+            // 2) Bakış noktası: arabanın 10 birim ilerisini göster (yere değil, ileri doğru)
+            glm::vec3 center = carObj.position + fw * 5.0f;
+
+            view = glm::lookAt(eye, center, glm::vec3(0, 1, 0));
+            break;
+        }
+
+        case CameraMode::FrontPOV: {
+            // Arabanın ileri yönü
+            glm::vec3 fw = glm::normalize(glm::vec3(
+                sin(glm::radians(carObj.rotation.y)),
+                0.0f,
+                cos(glm::radians(carObj.rotation.y))
+            ));
+
+            // 1) Göz noktası: arabanın 5 birim önünde, 2 birim yukarıda
+            glm::vec3 eye = carObj.position + fw * 5.0f + glm::vec3(0.0f, 2.0f, 0.0f);
+            // 2) Bakış noktası: aynı yönde biraz daha ileri
+            glm::vec3 center = eye + fw * 10.0f;
+
+            view = glm::lookAt(eye, center, glm::vec3(0, 1, 0));
+            break;
+        }
+        };
+
+       
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"),
             1, GL_FALSE, glm::value_ptr(proj));
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"),
